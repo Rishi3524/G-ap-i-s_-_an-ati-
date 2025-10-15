@@ -1,50 +1,50 @@
-<!-- COVER PAGE -->
+## Labs 1-
 
-<div align="center">
+```
+Student ID: 24754678
+```
+Student Name: Lyuchen Dai
 
-# **CITS5503 – Cloud Computing**
 
-## **Labs 1–5**
+# Lab 1
 
----
+## AWS Account and Log in
 
-### **Student Name:** Lyuchen Dai  
-### **Student ID:** 24754678  
+### [1] Log into an IAM user account created for you on AWS.
 
----
+Go to the portal at https://489389878001.signin.aws.amazon.com/console since our IAM user accounts are
+under the AWS account with ID 489389878001.
+At the first time you login, you will be prompted to change your password. After logging in, you should see
+the AWS Management Console.
 
-</div>
+### [2] Search and open Identity Access Management
 
----
+- Search for IAM
 
-## Lab 1 — AWS Account and Login
 
-### Step 1: Log into IAM User Account
+going to be a control plane, I don't give it too much resources. It is just an unprivileged container with
+unlimited cores and 1GB memory.
 
-Go to the portal:  
-**https://489389878001.signin.aws.amazon.com/console**
+## Install Linux packages
 
-Since our IAM user accounts are under the AWS account with ID `489389878001`.
+### [1] Install Python
 
-> At the first login, you’ll be prompted to change your password.  
-> After logging in, you should see the **AWS Management Console**.
-
----
-
-### Step 2: Open Identity Access Management (IAM)
-
-- Search for **IAM** in the AWS console.  
-- Open the service.
-
----
-
-## Install Linux Packages
-
-### Step 1: Install Python
-
-Ubuntu 22.04 LTS comes with **Python 3.10** pre-installed, so installation isn’t required.  
-However, install the **pip3** package manager.
-
+Ubuntu 22.04 LTS does come with Python 3.10 pre-installed, so I don't need to install it again. Just install the
+pip3 package manager.
 **Command:**
-```bash
-python3 -V
+
+```
+root in awscli in ~ took 1m7s
+⬢ [Systemd] ❯ python3 -V
+Python 3.10.
+```
+**Explaination:**
+
+- -V: is used to print the version of Python installed. Same as --version.
+**Command:**
+
+```
+root in awscli in ~
+⬢ [Systemd] ❯ apt install -y python3-pip
+```
+
