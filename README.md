@@ -146,8 +146,10 @@ We use these texts from English, Italian, Spanish and French to test the the AWS
 [Quote from "Divine Comedy" - Dante Alighieri]
 
 ### Step 1
-Now we create a script using the command: ```nano detect_lang.py```.
-
+Now we create a script using the command: 
+```
+nano detect_lang.py
+```
 Paste the below script and press CTRL+X and Y and ENTER.
 
 Use the following `detect_lang.py` script to test the above texts and get our desired output format:
@@ -207,8 +209,9 @@ multiplying it with 100. This gives us our desired output.
 
 ### Step2
 You can run the script using:
-
-``` python3 detect_lang.py ```
+```
+python3 detect_lang.py
+```
 
 This will give you the output in the format "<predicted_language> was detected with confidence" for the above texts.
 
