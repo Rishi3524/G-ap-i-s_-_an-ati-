@@ -1,7 +1,19 @@
-# CITS5503 Labs 1–5
+<!-- COVER PAGE -->
 
-**Student ID:** 24754678  
-**Student Name:** Lyuchen Dai  
+<div align="center">
+
+# **CITS5503 – Cloud Computing**
+
+## **Labs 1–5**
+
+---
+
+### **Student Name:** Lyuchen Dai  
+### **Student ID:** 24754678  
+
+---
+
+</div>
 
 ---
 
