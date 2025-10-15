@@ -145,7 +145,7 @@ We use these texts from English, Italian, Spanish and French to test the the AWS
 "L'amor che move il sole e l'altre stelle."
 [Quote from "Divine Comedy" - Dante Alighieri]
 
-#### Step 1
+### Step 1
 Now we create a script using the command: ```nano detect_lang.py```.
 
 Paste the below script and press CTRL+X and Y and ENTER.
@@ -205,7 +205,7 @@ Example response:
 Now we process this to get the actual name mapped to the language code and the percentage from score by
 multiplying it with 100. This gives us our desired output.
 
-#### Step2
+### Step2
 You can run the script using:
 
 ``` python3 detect_lang.py ```
