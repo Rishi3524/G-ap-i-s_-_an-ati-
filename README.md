@@ -13,40 +13,317 @@
 
 ### [1] Create an EC2 micro instance with Ubuntu and SSH into it. 
 
+For this task I used the following Python script from LAB2 named **create_ec2.py** by using **nano create_ec2.py**: 
 
-### [2] Install the Python 3 virtual environment package. 
+**Step 1** Copy the following script and paste it and then CTRL+X, Y, ENTER to save it.
+   
+```
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import boto3
+from botocore.exceptions import ClientError, NoCredentialsError
+
+STUDENT_NUMBER = "23463452"
+REGION = "ap-northeast-1"
+AMI_ID = "ami-054400ced365b82a0"
+INSTANCE_TYPE = "t3.micro"
 
 
-### [3] Access a directory 
+def _default_vpc_id(ec2) -> str: # Basically to get the vpc id for creating the security group using the functions.
+    vpcs = ec2.describe_vpcs(Filters=[{"Name": "isDefault", "Values": ["true"]}]).get("Vpcs", [])
+    if not vpcs:
+        raise RuntimeError("No default VPC in region.")
+    return vpcs[0]["VpcId"]
 
+
+def _default_subnet_id(ec2, vpc_id: str) -> str: # Needed to run the instance of EC2.
+    subnets = ec2.describe_subnets(
+        Filters=[{"Name": "vpc-id", "Values": [vpc_id]}, {"Name": "default-for-az", "Values": ["true"]}]
+    ).get("Subnets", [])
+    if not subnets:
+        subnets = ec2.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]).get("Subnets", [])
+        if not subnets:
+            raise RuntimeError("No subnet in default VPC.")
+    return sorted(subnets, key=lambda s: s["AvailabilityZone"])[0]["SubnetId"]
+
+
+def main() -> int:
+    sg_name = f"{STUDENT_NUMBER}-sg"
+    key_name = f"{STUDENT_NUMBER}-key"
+    inst_name = f"{STUDENT_NUMBER}-vm"
+    pem_path = Path.home() / ".ssh" / f"{key_name}.pem"
+
+    try:
+        ec2 = boto3.client("ec2", region_name=REGION)
+
+        # 1) Creates a Security Group
+        vpc_id = _default_vpc_id(ec2)
+        sg_resp = ec2.create_security_group(
+            Description="security group for development environment",
+            GroupName=sg_name,
+            VpcId=vpc_id,
+        )
+        sg_id = sg_resp["GroupId"]
+        # 2) Allows SSH access and permit instance to receive traffic from port 22
+        ec2.authorize_security_group_ingress(
+            GroupId=sg_id,
+            IpPermissions=[
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 22,
+                    "ToPort": 22,
+                    "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "SSH"}],
+                }
+            ],
+        )
+
+        # 3) Create Key Pair and write the permissions
+        pem_path.parent.mkdir(parents=True, exist_ok=True)
+        key_resp = ec2.create_key_pair(KeyName=key_name)
+        pem_path.write_text(key_resp["KeyMaterial"], encoding="utf-8")
+        os.chmod(pem_path, 0o400)
+
+        # 4) Run the instance
+        subnet_id = _default_subnet_id(ec2, vpc_id)
+        run_resp = ec2.run_instances(
+            ImageId=AMI_ID,
+            InstanceType=INSTANCE_TYPE,
+            MinCount=1,
+            MaxCount=1,
+            KeyName=key_name,
+            NetworkInterfaces=[
+                {
+                    "DeviceIndex": 0,
+                    "SubnetId": subnet_id,
+                    "AssociatePublicIpAddress": True,
+                    "Groups": [sg_id],
+                }
+            ],
+        )
+        instance_id = run_resp["Instances"][0]["InstanceId"]
+
+        # 5) Tag the instance using a Name 
+        ec2.create_tags(Resources=[instance_id], Tags=[{"Key": "Name", "Value": inst_name}])
+
+        # 6) get Public IP
+        ec2.get_waiter("instance_running").wait(InstanceIds=[instance_id])
+        described = ec2.describe_instances(InstanceIds=[instance_id])
+        public_ip = described["Reservations"][0]["Instances"][0].get("PublicIpAddress", "")
+        if public_ip:
+            print(f"PublicIp: {public_ip}")
+            print(f"SSH: ssh -i '{pem_path}' ubuntu@{public_ip}")
+        return 0
+
+    except NoCredentialsError:
+        print("ERROR: Configure AWS credentials (e.g., `aws configure`).")
+    except ClientError as e:
+        print(f"AWS ERROR: {e.response.get('Error', {}).get('Code', 'ClientError')}: {e}")
+    except Exception as e:
+        print(f"ERROR: {e}")
+
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+```
+**The breakdown of the functions used in the script**:
+
+**_default_vpc_id(ec2) -> str**:
+
+Input: takes a Boto3 EC2 client.
+Action: It filters describe_vpcs by isDefault=true; chooses the first match.
+Output: The default VPC ID (e.g., vpc-abc123) is given.
+
+**_default_subnet_id(ec2, vpc_id: str) -> str**:
+
+Input: It takes a EC2 client and a VPC ID.
+Action: It tries describe_subnets with the filters vpc-id=<vpc_id> and default-for-az=true (auto public IP). If none of them then, fall back to any subnet in the VPC. It is then sorted by AvailabilityZone and picks the first one to determine.
+Output: a Subnet ID is in which the EC2 instance lives.
+
+**main() -> int**:
+
+This implements all the steps of AWS CLI preparing the names/paths: builds security group name, key name, instance name, and PEM path under ~/.ssh/.
+
+EC2 client: boto3.client("ec2", region_name=REGION).
+
+1) sg_resp = ec2.create_security_group(): creates SG in the default VPC with description; saves sg_id.
+
+2) ec2.authorize_security_group_ingress(): opens TCP/22 from 0.0.0.0/0 (world-open for convenience; risky on the open internet).
+
+3) key_resp = ec2.create_key_pair(): creates key pair, writes PEM to disk, sets 0400 permissions.
+
+4) run_resp = ec2.run_instances(): chooses a subnet from the above function, runs one t3.micro from the given AMI; attaches SG; ensures public IP via AssociatePublicIpAddress=True.
+
+5) ec2.create_tags(): sets Name=23463452-vm.
+
+6) desc = ec2.describe_instances():describes the instance.
+
+Returns: 0 on success, 1 on handled errors.
+
+**Note**: Refer to [page](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/ec2.html) for details of all thefunctions used to initiate the EC2instance. 
+
+**Step 2** Now run this script using:
+
+```
+python3 create_ec2.py
+```
+
+Instance is created:
+
+<img width="1919" height="491" alt="Screenshot 2025-09-17 104418" src="https://github.com/user-attachments/assets/bc157c7c-7b31-4bb8-92ac-c8984f0ad8c4" />
+
+
+### [2] Install the Python 3 virtual environment package
+
+Install them using the following commands
+
+```
+sudo apt-get update
+sudo apt-get upgrade
+sudo apt-get install python3-venv
+```
+It is easier now if you change the bash to operate as sudo using:
+
+```
+sudo bash
+```
+
+### [3] Access a directory  
+
+Create a directory with a path `/opt/wwc/mysites` and `cd` into the directory using:
+
+```
+mkdir /opt/wwc/mysites
+cd /opt/wwc/mysites
+```
 
 ### [4] Set up a virtual environment
 
+```
+python3 -m venv myvenv
+```
 
 ### [5] Activate the virtual environment
 
+```
+source myvenv/bin/activate
+
+pip install django
+
+django-admin startproject lab
+
+cd lab
+
+python3 manage.py startapp polls
+```
 
 ### [6] Install nginx
 
+```
+apt install nginx
+```
 
 ### [7] Configure nginx
 
+edit `/etc/nginx/sites-enabled/default` by **nano /etc/nginx/sites-enabled/default** and replace the contents of the file with the below
+and then CTRL+X, Y, ENTER to save it:
+
+```
+server {
+  listen 80 default_server;
+  listen [::]:80 default_server;
+
+  location / {
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+
+    proxy_pass http://127.0.0.1:8000;
+  }
+}
+```
 
 ### [8] Restart nginx
 
+```
+service nginx restart
+```
+
 
 ### [9] Access your EC2 instance
+
+Go to your app directory: `cd /opt/wwc/mysites/lab`, run:
+
+```
+python3 manage.py runserver 8000
+```
+
+Open a browser and enter the IP address of your EC2 instance.
+
+<img width="1469" height="554" alt="Screenshot 2025-09-23 205457" src="https://github.com/user-attachments/assets/099c329b-577e-4ecc-8046-35c567fa6548" />
+
+
+<img width="1919" height="1153" alt="Screenshot 2025-09-23 205029" src="https://github.com/user-attachments/assets/2331513b-7cdb-4e53-ba62-767ce5f87467" />
 
 
 ## Set up Django inside the created EC2 instance
 
 ### [1] Edit the following files (create them if not exist)
 
+edit polls/views.py by **nano polls/views.py** and replace the contents of the file with the below
+and then CTRL+X, Y, ENTER to save it:
+
+```
+from django.http import HttpResponse
+
+def index(request):
+    return HttpResponse("Hello, world.")
+```
+
+edit polls/urls.py by **nano polls/urls.py** and replace the contents of the file with the below
+and then CTRL+X, Y, ENTER to save it:
+
+```
+from django.urls import path
+from . import views
+
+urlpatterns = [
+    path('', views.index, name='index'),
+]
+```
+
+edit lab/urls.py by **nano lab/urls.py** and replace the contents of the file with the below
+and then CTRL+X, Y, ENTER to save it:
+
+```
+from django.urls import include, path
+from django.contrib import admin
+
+urlpatterns = [
+    path('polls/', include('polls.urls')),
+    path('admin/', admin.site.urls),
+]
+```
 
 ### [2] Run the web server again
 
+```
+python3 manage.py runserver 8000
+```
 
 ### [3] Access the EC2 instance
+
+Access the URL: http://\<ip address of your EC2 instance>/polls/, and output what you've got from above. 
+
+**NOTE**: remember to put the /polls/ on the end and you may need to restart nginx if it does not work.
+
+<img width="1476" height="583" alt="Screenshot 2025-09-23 210638" src="https://github.com/user-attachments/assets/c72176aa-5c60-4fce-afe1-13e5bd9aae75" />
+
+<img width="1919" height="119" alt="Screenshot 2025-09-23 210609" src="https://github.com/user-attachments/assets/43a9b76c-ec80-42af-8763-e5bd71a76eb6" />
 
 
 ## Set up an ALB
@@ -64,11 +341,213 @@
 
 # Lab 7
 
-## Set up an EC2 instance
+## [1]Set up an EC2 instance
 
-## Install and configure Fabric
+For this task I used the following Python script from LAB2 named **create_ec2.py** by using **nano create_ec2.py**: 
 
-## Use Fabric for automation
+**Step 1** Copy the following script and paste it and then CTRL+X, Y, ENTER to save it.
+   
+```
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import boto3
+from botocore.exceptions import ClientError, NoCredentialsError
+
+STUDENT_NUMBER = "23463452"
+REGION = "ap-northeast-1"
+AMI_ID = "ami-054400ced365b82a0"
+INSTANCE_TYPE = "t3.micro"
+
+
+def _default_vpc_id(ec2) -> str: # Basically to get the vpc id for creating the security group using the functions.
+    vpcs = ec2.describe_vpcs(Filters=[{"Name": "isDefault", "Values": ["true"]}]).get("Vpcs", [])
+    if not vpcs:
+        raise RuntimeError("No default VPC in region.")
+    return vpcs[0]["VpcId"]
+
+
+def _default_subnet_id(ec2, vpc_id: str) -> str: # Needed to run the instance of EC2.
+    subnets = ec2.describe_subnets(
+        Filters=[{"Name": "vpc-id", "Values": [vpc_id]}, {"Name": "default-for-az", "Values": ["true"]}]
+    ).get("Subnets", [])
+    if not subnets:
+        subnets = ec2.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]).get("Subnets", [])
+        if not subnets:
+            raise RuntimeError("No subnet in default VPC.")
+    return sorted(subnets, key=lambda s: s["AvailabilityZone"])[0]["SubnetId"]
+
+
+def main() -> int:
+    sg_name = f"{STUDENT_NUMBER}-sg"
+    key_name = f"{STUDENT_NUMBER}-key"
+    inst_name = f"{STUDENT_NUMBER}-vm"
+    pem_path = Path.home() / ".ssh" / f"{key_name}.pem"
+
+    try:
+        ec2 = boto3.client("ec2", region_name=REGION)
+
+        # 1) Creates a Security Group
+        vpc_id = _default_vpc_id(ec2)
+        sg_resp = ec2.create_security_group(
+            Description="security group for development environment",
+            GroupName=sg_name,
+            VpcId=vpc_id,
+        )
+        sg_id = sg_resp["GroupId"]
+        # 2) Allows SSH access and permit instance to receive traffic from port 22
+        ec2.authorize_security_group_ingress(
+            GroupId=sg_id,
+            IpPermissions=[
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 22,
+                    "ToPort": 22,
+                    "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "SSH"}],
+                }
+            ],
+        )
+
+        # 3) Create Key Pair and write the permissions
+        pem_path.parent.mkdir(parents=True, exist_ok=True)
+        key_resp = ec2.create_key_pair(KeyName=key_name)
+        pem_path.write_text(key_resp["KeyMaterial"], encoding="utf-8")
+        os.chmod(pem_path, 0o400)
+
+        # 4) Run the instance
+        subnet_id = _default_subnet_id(ec2, vpc_id)
+        run_resp = ec2.run_instances(
+            ImageId=AMI_ID,
+            InstanceType=INSTANCE_TYPE,
+            MinCount=1,
+            MaxCount=1,
+            KeyName=key_name,
+            NetworkInterfaces=[
+                {
+                    "DeviceIndex": 0,
+                    "SubnetId": subnet_id,
+                    "AssociatePublicIpAddress": True,
+                    "Groups": [sg_id],
+                }
+            ],
+        )
+        instance_id = run_resp["Instances"][0]["InstanceId"]
+
+        # 5) Tag the instance using a Name 
+        ec2.create_tags(Resources=[instance_id], Tags=[{"Key": "Name", "Value": inst_name}])
+
+        # 6) get Public IP
+        ec2.get_waiter("instance_running").wait(InstanceIds=[instance_id])
+        described = ec2.describe_instances(InstanceIds=[instance_id])
+        public_ip = described["Reservations"][0]["Instances"][0].get("PublicIpAddress", "")
+        if public_ip:
+            print(f"PublicIp: {public_ip}")
+            print(f"SSH: ssh -i '{pem_path}' ubuntu@{public_ip}")
+        return 0
+
+    except NoCredentialsError:
+        print("ERROR: Configure AWS credentials (e.g., `aws configure`).")
+    except ClientError as e:
+        print(f"AWS ERROR: {e.response.get('Error', {}).get('Code', 'ClientError')}: {e}")
+    except Exception as e:
+        print(f"ERROR: {e}")
+
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+```
+**The breakdown of the functions used in the script**:
+
+**_default_vpc_id(ec2) -> str**:
+
+Input: takes a Boto3 EC2 client.
+Action: It filters describe_vpcs by isDefault=true; chooses the first match.
+Output: The default VPC ID (e.g., vpc-abc123) is given.
+
+**_default_subnet_id(ec2, vpc_id: str) -> str**:
+
+Input: It takes a EC2 client and a VPC ID.
+Action: It tries describe_subnets with the filters vpc-id=<vpc_id> and default-for-az=true (auto public IP). If none of them then, fall back to any subnet in the VPC. It is then sorted by AvailabilityZone and picks the first one to determine.
+Output: a Subnet ID is in which the EC2 instance lives.
+
+**main() -> int**:
+
+This implements all the steps of AWS CLI preparing the names/paths: builds security group name, key name, instance name, and PEM path under ~/.ssh/.
+
+EC2 client: boto3.client("ec2", region_name=REGION).
+
+1) sg_resp = ec2.create_security_group(): creates SG in the default VPC with description; saves sg_id.
+
+2) ec2.authorize_security_group_ingress(): opens TCP/22 from 0.0.0.0/0 (world-open for convenience; risky on the open internet).
+
+3) key_resp = ec2.create_key_pair(): creates key pair, writes PEM to disk, sets 0400 permissions.
+
+4) run_resp = ec2.run_instances(): chooses a subnet from the above function, runs one t3.micro from the given AMI; attaches SG; ensures public IP via AssociatePublicIpAddress=True.
+
+5) ec2.create_tags(): sets Name=23463452-vm.
+
+6) desc = ec2.describe_instances():describes the instance.
+
+Returns: 0 on success, 1 on handled errors.
+
+**Note**: Refer to [page](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/ec2.html) for details of all thefunctions used to initiate the EC2instance. 
+
+**Step 2** Now run this script using:
+
+```
+python3 create_ec2.py
+```
+
+Instance is created:
+
+<img width="1919" height="491" alt="Screenshot 2025-09-17 104418" src="https://github.com/user-attachments/assets/bc157c7c-7b31-4bb8-92ac-c8984f0ad8c4" />
+
+## [2]Install and configure Fabric
+
+Now install fabric using:
+
+```
+pip install fabric
+```
+
+You will need to create a config file in ~/.ssh with the contents:
+
+```
+nano  ~/.ssh/config
+```
+
+Copy the following script and paste it and then CTRL+X, Y, ENTER to save it.
+
+```
+Host <your EC2 instance name>
+	Hostname <your EC2 instance public IPv4 DNS>
+	User ubuntu
+	UserKnownHostsFile /dev/null
+	StrictHostKeyChecking no
+	PasswordAuthentication no
+	IdentityFile <path to your private key>
+```
+
+Replace `<your EC2 instance name>` and `<your EC2 instance public IPv4 DNS>` above and below with your real ones from step 1 where you created your ec2  instance.
+**Note:** You can get these after running the script as well as these details are printed on the terminal while initiating the ec2 instance.
+
+Rely on the fabric code below to connect to your instance.
+
+```
+python3
+>>> from fabric import Connection
+>>> c = Connection('<your EC2 instance name>')
+>>> result = c.run('uname -s')
+Linux
+>>>
+```
+
+## [3]Use Fabric for automation
 
 <div style="page-break-after: always;"></div>
 
