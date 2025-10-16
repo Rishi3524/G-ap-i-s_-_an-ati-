@@ -74,23 +74,386 @@
 
 # Lab 8
 
-## Create a Dockerfile and build a Docker image
+## [1]Create a Dockerfile and build a Docker image
 
-## Prepare ECR via Boto3 scripts on your local machine
+**Step 1**
+Make a directory for your lab: " mkdir lab8 " and then go into that directory: " cd lab8 ".
+
+**Step 2**
+Create your Dockerfile: 
+
+```
+nano Dockerfile
+```
+
+Then paste the below script into it and then CTRL+X, Y, ENTER to save it.
+
+```
+FROM python:3.10
+
+RUN pip install jupyter boto3 sagemaker awscli
+RUN mkdir /notebook
+
+# Use a sample access token
+ENV JUPYTER_ENABLE_LAB=yes
+ENV JUPYTER_TOKEN="CITS5503"
+
+# Allow access from ALL IPs
+RUN jupyter notebook --generate-config
+RUN echo "c.NotebookApp.ip = '0.0.0.0'" >> /root/.jupyter/jupyter_notebook_config.py
+
+# Copy the ipynb file
+RUN wget -P /notebook https://raw.githubusercontent.com/zhangzhics/CITS5503_Sem2/master/Labs/src/LabAI.ipynb
+
+WORKDIR /notebook
+EXPOSE 8888
+
+CMD ["jupyter", "notebook", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--allow-root"]
+
+```
+**Step 3**
+Now build the dockerfile using:
+
+```
+docker build -t YOUR_STUDENT_NUMBER-lab8 .
+```
+**Note:** Replace student_number with your own.
+
+**Step 4**
+After the above script finishes without errors, you can test your image locally by running:
+
+```
+docker run -p 8888:8888 YOUR_STUDENT_NUMBER-lab8
+```
+
+You can go to 127.0.0.1:8888 to check if a notebook file has been downloaded successfully.
+
+<img width="1919" height="1059" alt="image" src="https://github.com/user-attachments/assets/998e007f-ba8d-49cd-9209-94467a7c2be1" />
+
+The token is **"CITS5503"** as coded in the above script.
+
+<img width="1919" height="518" alt="Screenshot 2025-10-13 134927" src="https://github.com/user-attachments/assets/f7d89e5d-d518-484f-924a-98f81c0b232e" />
+
+
+## [2]Prepare ECR via Boto3 scripts on your local machine
 
 ### ECR
+**Step 1**
+Now we use this Boto3 script to create a ECR repository:
 
-## Push a local Docker image onto ECR
+```
+nano create_ecr_repo.py
+```
 
-## Deploy your Docker image onto ECS
+Then paste the below script into it and then CTRL+X, Y, ENTER to save it.
+
+```
+import boto3
+
+def create_or_check_repository(repository_name):
+    ecr_client = boto3.client('ecr')
+    try:
+        response = ecr_client.describe_repositories(repositoryNames=[repository_name])
+        repository_uri = response['repositories'][0]['repositoryUri']
+    except ecr_client.exceptions.RepositoryNotFoundException:
+        response = ecr_client.create_repository(repositoryName=repository_name)
+        repository_uri = response['repository']['repositoryUri']
+    return repository_uri
+
+
+repository_name = 'YOUR_STUDENT_NUMBER' + '_ecr_repo'
+repository_uri = create_or_check_repository(repository_name)
+print("ECR URI:", repository_uri)
+```
+**Note:** Replace student_number with your own.
+
+Then run the script:  **python3 create_ecr_repo.py**
+
+This gives you a **ECR URI**, and you need use this uri to push your Dockerfile into the ECR repository.
+
+**Step 2**
+The following code uses the AWS Boto3 to obtain an authorisation token from AWS ECR, decodes it to retrieve the username and password, 
+and then generates a Docker login command. This allows the user to log into ECR using the produced command, enabling them to push and pull Docker images.
+
+To get the Docker token:
+
+```
+nano create_docker_login_cmd_ecr.py
+```
+Then paste the below script into it and then CTRL+X, Y, ENTER to save it.
+
+```
+import boto3
+import base64
+def get_docker_login_cmd():
+    ecr_client = boto3.client('ecr')
+    token = ecr_client.get_authorization_token()
+    username, password = base64.b64decode(token['authorizationData'][0]['authorizationToken']).decode().split(':')
+    registry = token['authorizationData'][0]['proxyEndpoint']
+    return f"docker login -u {username} -p {password} {registry}"
+
+print(get_docker_login_cmd())
+```
+
+Run the script: **python3 create_docker_login_cmd_ecr.py**
+
+You will get the command to grant the Docker access to the ECR repo. You have to run the output command from the 
+script above in your terminal, and you will get "Login Succeeded" from the terminal if it goes well.
+
+<img width="1898" height="854" alt="Screenshot 2025-10-13 140902" src="https://github.com/user-attachments/assets/33bbb5f6-4700-43d7-b713-3dc3a94e699e" />
+
+
+**NOTE**: If you're using WSL 2, DNS often breaks and returns an error message such as "no such host". If so, try this:
+- Edit your WSL resolv.conf:
+  
+```bash
+sudo rm /etc/resolv.conf
+echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+sudo chattr +i /etc/resolv.conf
+```
+- Restart WSL2
+
+## [3]Push a local Docker image onto ECR
+
+Once you see the "Login Succeeded" message, you tag and push your local Docker image to your ECR repository via terminal. To tag your image as the latest version, do:
+
+```
+docker tag YOUR_STUDENT_NUMBER-lab8:latest YOUR_ECR_URI:latest
+```
+Replace your student number.
+
+Then push to your ECR:
+
+```
+docker push YOUR_ECR_URI:latest
+```
+**YOUR_ECR_URI** is the one we get from the above step.
+
+<img width="1887" height="392" alt="Screenshot 2025-10-13 140930" src="https://github.com/user-attachments/assets/76e316cb-3ce6-4035-8143-69a9c0e67b7e" />
+
+The step above takes some time to upload, which depends on your internet connection.
+
+<img width="1919" height="526" alt="Screenshot 2025-10-13 140945" src="https://github.com/user-attachments/assets/18e39dc9-5262-4ea6-9840-573344aafd00" />
+
+
+## [4]Deploy your Docker image onto ECS
+
 
 ### Create a task definition for an ECS task:
 
-### Create an ECS service:
+To inject environment variables into your ECS task, add an environment field in your container definition as follows:
 
-### Get a public IP address
+**Step 1**
+
+```
+nano create_task_def_ecs.py
+```
+Then paste the below script into it and then CTRL+X, Y, ENTER to save it.
+Replace student number with your own number and ECR_URI from the above steps
+
+```
+import boto3
+
+def create_ecs_task_definition(
+    client, image_uri, account_id, task_role_name, execution_role_name, student_id,
+    environment_dict=None,port=8888, cpu='256', memory='512'
+):
+    task_role_arn = f'arn:aws:iam::{account_id}:role/{task_role_name}'
+    execution_role_arn = f'arn:aws:iam::{account_id}:role/{execution_role_name}'
+
+    env_list = [{'name': k, 'value': v} for k, v in (environment_dict or {}).items()]
+    
+    response = client.register_task_definition(
+        family=f'{student_id}-task-family',
+        networkMode='awsvpc',
+        requiresCompatibilities=['FARGATE'],
+        cpu=cpu,
+        memory=memory,
+        taskRoleArn=task_role_arn,
+        executionRoleArn=execution_role_arn,
+        containerDefinitions=[
+            {
+                'name': f'{student_id}-container',
+                'image': image_uri,
+                'essential': True,
+                'portMappings': [
+                    {
+                        'containerPort': port,
+                        'hostPort': port,
+                        'protocol': 'tcp'
+                    },
+                ]
+            },
+        ],
+    )
+    return response
+
+account_id = '489389878001'
+student_id = "YOUR_STUDENT_NUMBER"
+task_role_name = 'SageMakerRole'
+execution_role_name = 'ecsTaskExecutionRole'
+image_uri = 'YOUR_ECR_URI'
+
+
+ecs_client = boto3.client('ecs')
+
+task_definition = create_ecs_task_definition(
+    ecs_client,
+    image_uri,
+    account_id,
+    task_role_name,
+    execution_role_name,
+    student_id,
+    port=8888                      
+)
+print("Task Definition ARN:", task_definition['taskDefinition']['taskDefinitionArn'])
+
+```
+**Step 2**
+Run the script: **python3 create_task_def_ecs.py**
+
+The printed task definition ARN is used for the next step.
+
+<img width="1201" height="104" alt="Screenshot 2025-10-13 142844" src="https://github.com/user-attachments/assets/4e6eadb2-d573-4603-9513-703cfdb6777b" />
+
+
+### [5]Create an ECS service:
+
+**Step1**
+First, create a cluster then create an ECS service:
+
+```
+nano create_ecs_service.py
+```
+Then paste the below script into it and then CTRL+X, Y, ENTER to save it.
+Replace student number with your own number and ECR_URI from the above steps
+
+```
+import boto3
+
+def create_ecs_cluster(client, cluster_name):
+    response = client.create_cluster(
+        clusterName=cluster_name
+    )
+    return response
+
+def create_ecs_service(client, cluster_name, service_name, task_definition, subnet_ids, security_group_ids):
+    response = client.create_service(
+        cluster=cluster_name,
+        serviceName=service_name,
+        taskDefinition=task_definition,
+        desiredCount=1,
+        launchType='FARGATE',
+        networkConfiguration={
+            'awsvpcConfiguration': {
+                'subnets': subnet_ids,
+                'securityGroups': security_group_ids,
+                'assignPublicIp': 'ENABLED'
+            }
+        },
+        deploymentConfiguration={
+            'maximumPercent': 200,
+            'minimumHealthyPercent': 100
+        }
+    )
+    return response
+
+#This function is to check when the service becomes stable
+def wait_for_service_stability(client, cluster_name, service_name):
+    waiter = client.get_waiter('services_stable')
+    waiter.wait(cluster=cluster_name, services=[service_name])
+
+ecs_client = boto3.client('ecs')
+
+student_id = "YOUR_STUDENT_NUMBER"
+ECR_image_uri = 'YOUR_ECR_URI'
+
+cluster_name = student_id + '-cluster'
+create_ecs_cluster(ecs_client, cluster_name)
+
+service_name = student_id + '-service'
+task_definition = 'YOUR_TASK_DEFINITION_ARN'
+subnet_id_1= 'YOUR_SUBNET_ID_1'
+subnet_id_2= 'YOUR_SUBNET_ID_2'
+subnet_id_3= 'YOUR_SUBNET_ID_3'
+
+subnet_ids = [subnet_id_1, subnet_id_2, subnet_id_3]
+security_group_ids = ['YOUR_SECURITY_GROUP_ID']
+
+ecs_client = boto3.client('ecs')
+
+service_response = create_ecs_service(ecs_client, cluster_name, service_name, task_definition, subnet_ids, security_group_ids)
+print(f'ECS Service created: {service_response["service"]["serviceArn"]}')
+
+print(f'Waiting for service {service_name} to become stable...')
+wait_for_service_stability(ecs_client, cluster_name, service_name)
+print(f'Service {service_name} is now stable.')
+
+```
+
+**Step 2**  
+Security Group setup (via Console)
+Go to VPC → Security Groups → Create security group
+
+Name: ecs-lab8-sg
+VPC: default
+
+Inbound rules:
+Type: Custom TCP, Port: 8888, Source: 0.0.0.0/0
+
+Outbound rules:
+Type: HTTPS, Port: 443, Destination: 0.0.0.0/0
+
+Copy the Security Group ID (e.g. sg-0abcd1234ef567890) for the above code.
+
+**Step 3** — Find your subnet IDs
+
+In AWS Console:
+
+Navigate to VPC → Subnets
+
+Note 3 subnet IDs from your default VPC in ap-northeast-1a, 1b, 1c
+For example:
+subnet-0a1b2c3d4e5f6a7b
+subnet-1a2b3c4d5e6f7a8b
+subnet-2a3b4c5d6e7f8a9b
+
+<img width="1913" height="746" alt="Screenshot 2025-10-13 143112" src="https://github.com/user-attachments/assets/4e8b1d34-e076-4d5c-b852-0f2f0f80d40f" />
+
+<img width="1919" height="846" alt="Screenshot 2025-10-13 143827" src="https://github.com/user-attachments/assets/c826a93b-9a93-4ed3-b23c-749a5f9e5b6a" />
+
+**Step 4**
+Now run the above script: **python3 create_ecs_service.py**
+
+### [6]Get a public IP address
+
+Remember to update relevant variables below such as cluster and service names after running the above script in the previous step to create a service:
+Then run this command after running the above script.
+
+```
+aws ecs describe-tasks \
+    --cluster YOUR_CLUSTER_NAME \
+    --tasks $(aws ecs list-tasks --cluster YOUR_CLUSTER_NAME --service-name YOUR_SERVICE_NAME --query 'taskArns[0]' --output text) \
+    --query 'tasks[0].attachments[0].details[?name==`networkInterfaceId`].value' \
+    --output text | xargs -I {} aws ec2 describe-network-interfaces \
+    --network-interface-ids {} \
+    --query 'NetworkInterfaces[0].Association.PublicIp' \
+    --output text
+```
+<img width="1686" height="488" alt="Screenshot 2025-10-13 150442" src="https://github.com/user-attachments/assets/bd93f624-5ad2-423b-ab3d-06f58c23c3dc" />
+
+Note the IP address from this step.
+
+Open a browser and navigate to the following address to run it within your ECS. Your public IP address was returned in the previous step.
+
+```
+<YOUR PUBLIC IP>:8888
+```
+<img width="1915" height="1110" alt="Screenshot 2025-10-13 150737" src="https://github.com/user-attachments/assets/0f63b564-b263-49e9-b0b6-d3ae21311c35" />
 
 ## Run Hyperparameter Tuning Jobs
+
+For this step, it is detailed in the notebook [here](https://github.com/zhangzhics/CITS5503_Sem2/blob/master/Labs/src/LabAI.ipynb). 
 
 
 <div style="page-break-after: always;"></div>
