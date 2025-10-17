@@ -128,7 +128,7 @@ Comm time (scatter+gather): 0.008s, Compute time: 0.018s
 
 ---
 
-##  4. Running on Setonix (Pawsey Cray EX)
+##  4. Running on Setonix (Pawsey Cray)
 
 **Batch Script:** `run_conv2d_setonix.slurm`
 ```bash
